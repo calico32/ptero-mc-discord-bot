@@ -16,6 +16,7 @@ const httpOptions: AxiosRequestConfig = {
 };
 const baseUrl = process.env.PANEL_URL;
 const serverId = process.env.SERVER_ID;
+const proxyServerId = process.env.PROXY_SERVER_ID;
 const prefix = process.env.PREFIX!;
 
 const setPresence = () => {
@@ -56,22 +57,30 @@ client.on('message', async msg => {
     if (resources.attributes.current_state === 'running')
       return msg.channel.send(Embed.error('Server is already running!'));
 
-    const { status, data } = await axios.post(
-      `${baseUrl}/api/client/servers/${serverId}/power`,
-      { signal: 'start' },
-      httpOptions
-    );
-
-    if (status === 204)
-      return msg.channel.send(
-        Embed.success(
-          'Server started!',
-          'Please allow up to 60 seconds for the server to complete startup.'
-        )
-      );
+    try {
+      await Promise.all([
+        axios.post(
+          `${baseUrl}/api/client/servers/${serverId}/power`,
+          { signal: 'start' },
+          httpOptions
+        ),
+        ...(proxyServerId
+          ? [
+              axios.post(
+                `${baseUrl}/api/client/servers/${proxyServerId}/power`,
+                { signal: 'start' },
+                httpOptions
+              ),
+            ]
+          : []),
+      ]);
+    } catch (err) {}
 
     return msg.channel.send(
-      Embed.error(`Unhandled ${status}!`, '```' + JSON.stringify(data, null, 2) + '```')
+      Embed.success(
+        'Server started!',
+        'Please allow up to 60 seconds for the server to complete startup.'
+      )
     );
   } else if (cmd === 'status') {
     const { data, status } = await axios.get(
