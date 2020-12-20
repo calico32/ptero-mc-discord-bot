@@ -93,7 +93,10 @@ client.on('message', async msg => {
         Embed.success(
           'Server is **online**',
           data.players.length
-            ? '**Players:** ' + data.players.join(', ').replace(/\\/g, '\\\\').replace(/_/g, '\\_')
+            ? `**Players (${data.players.length}):** ${data.players
+                .join(', ')
+                .replace(/\\/g, '\\\\')
+                .replace(/_/g, '\\_')}`
             : 'No players connected'
         )
       );
