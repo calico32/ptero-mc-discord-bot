@@ -1,61 +1,156 @@
-import axios, { AxiosRequestConfig } from 'axios';
-import { Client } from 'discord.js';
-import dotenv from 'dotenv';
+import axios, { AxiosRequestConfig } from 'axios'
+import {
+  ApplicationCommandData,
+  Client,
+  HTTPAttachmentData,
+  MessageActionRow,
+  MessageButton,
+  MessagePayload,
+} from 'discord.js'
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { Embed } from './embed.js'
 
-import { Embed } from './embed';
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
 
-dotenv.config();
+const files: HTTPAttachmentData[] = [
+  await MessagePayload.resolveFile({
+    attachment: readFileSync(resolve(__dirname, '..', 'assets/grass.png')),
+    name: 'grass.png',
+  }),
+]
 
-const client = new Client({ disableMentions: 'all' });
+const client = new Client({ intents: [] })
 const httpOptions: AxiosRequestConfig = {
   headers: {
     Accept: 'application/json',
     Authorization: 'Bearer ' + process.env.PANEL_API_TOKEN,
     'Content-Type': 'application/json',
   },
-};
-const baseUrl = process.env.PANEL_URL;
-const serverId = process.env.SERVER_ID;
-const proxyServerId = process.env.PROXY_SERVER_ID;
-const prefix = process.env.PREFIX!;
+}
+const baseUrl = process.env.PANEL_URL
+const serverId = process.env.SERVER_ID
+const proxyServerId = process.env.PROXY_SERVER_ID
 
-const setPresence = () => {
+let lastPlayerCount: number | null = null
+const setPresence = async () => {
+  let playerCount = null
+
+  try {
+    const { data } = await axios.get(process.env.PLAYER_LIST_ENDPOINT!)
+    if (data.players.length !== lastPlayerCount) {
+      playerCount = data.players.length
+    }
+  } catch {
+    playerCount = null
+  }
+
+  if (playerCount === lastPlayerCount) {
+    return
+  }
+
+  lastPlayerCount = playerCount
+
   client.user?.setPresence({
-    activity: {
-      type: 'PLAYING',
-      name: `${prefix}help`,
-    },
-  });
-};
+    activities: [
+      {
+        type: 'PLAYING',
+        name: `${
+          playerCount != null
+            ? `with ${playerCount} player${playerCount === 1 ? '' : 's'}`
+            : 'Minecraft'
+        } | /help`,
+      },
+    ],
+  })
+}
 
 client.on('ready', () => {
-  console.log(`${client.user?.tag} ready`);
-  setPresence();
-  setInterval(setPresence, 1000 * 60 * 5);
-});
+  console.log(`${client.user?.tag} ready`)
+  setPresence()
+  setInterval(setPresence, 1000 * 15)
 
-client.on('debug', content => {
+  const commands: ApplicationCommandData[] = [
+    {
+      name: 'help',
+      description: 'Show help message',
+      type: 'CHAT_INPUT',
+    },
+    {
+      name: 'status',
+      description: 'Show server status and player count',
+      type: 'CHAT_INPUT',
+    },
+    {
+      name: 'start',
+      description: 'Start the server',
+      type: 'CHAT_INPUT',
+    },
+    {
+      name: 'restart',
+      description: 'Restart the server',
+      type: 'CHAT_INPUT',
+    },
+  ]
+
+  client.application?.commands.set(commands)
+})
+
+client.on('debug', (content) => {
   if (content.includes('Remaining: '))
-    console.log(`Remaining gateway sessions: ${content.split(' ').reverse()[0]}`);
-});
+    console.log(`Remaining gateway sessions: ${content.split(' ').reverse()[0]}`)
+})
 
-client.on('message', async msg => {
-  if (msg.author.bot) return;
-  if (msg.author.id == client.user?.id) return;
-  if (!msg.guild) return; // don't respond to DMs
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.inGuild()) return
 
-  if (!msg.content.startsWith(prefix)) return;
+  let cmd
 
-  const [cmd] = msg.content.slice(prefix.length).replace(/ +/g, ' ').split(' ');
+  if (interaction.isCommand()) {
+    cmd = interaction.commandName
+  } else if (interaction.isButton()) {
+    if (interaction.customId === 'start-server') {
+      cmd = 'start'
+    }
+  } else {
+    return
+  }
+
+  if (cmd === 'help') {
+    interaction.reply({
+      embeds: [
+        new Embed({
+          title: 'Server manager',
+          fields: [
+            { name: `\`/start\``, value: 'Start the server if it is not already running.' },
+            { name: `\`/status\``, value: 'Show server status and connected players.' },
+            { name: `\`/help\``, value: 'Show this help message.' },
+          ],
+          footer: { text: 'Created by wiisportsresorts#2444' },
+        }),
+      ],
+      files,
+    })
+    return
+  }
+
+  interaction.deferReply()
 
   if (cmd === 'start') {
     const { data: resources } = await axios.get(
       `${baseUrl}/api/client/servers/${serverId}/resources`,
       httpOptions
-    );
+    )
 
-    if (resources.attributes.current_state === 'running')
-      return msg.channel.send(Embed.error('Server is already running!'));
+    if (resources.attributes.current_state === 'running') {
+      interaction.editReply({
+        embeds: [Embed.error('Server is already running!')],
+        files,
+      })
+      return
+    }
 
     try {
       await Promise.all([
@@ -73,60 +168,126 @@ client.on('message', async msg => {
               ),
             ]
           : []),
-      ]);
+      ])
     } catch (err) {}
 
-    return msg.channel.send(
-      Embed.success(
-        'Server started!',
-        'Please allow up to 60 seconds for the server to complete startup.'
-      )
-    );
-  } else if (cmd === 'status') {
+    interaction.editReply({
+      embeds: [
+        Embed.success(
+          'Server restarted!',
+          'Please allow up to 60 seconds for the server to complete restarting.'
+        ),
+      ],
+      files,
+    })
+    return
+  }
+
+  if (cmd === 'restart') {
+    const { data: resources } = await axios.get(
+      `${baseUrl}/api/client/servers/${serverId}/resources`,
+      httpOptions
+    )
+
+    if (resources.attributes.current_state === 'running') {
+      interaction.editReply({
+        embeds: [Embed.error('Server is already running!')],
+        files,
+      })
+      return
+    }
+
+    try {
+      await Promise.all([
+        axios.post(
+          `${baseUrl}/api/client/servers/${serverId}/power`,
+          { signal: 'restart' },
+          httpOptions
+        ),
+        ...(proxyServerId
+          ? [
+              axios.post(
+                `${baseUrl}/api/client/servers/${proxyServerId}/power`,
+                { signal: 'start' },
+                httpOptions
+              ),
+            ]
+          : []),
+      ])
+    } catch (err) {}
+
+    interaction.editReply({
+      embeds: [
+        Embed.success(
+          'Server restarted!',
+          'Please allow up to 60 seconds for the server to complete startup.'
+        ),
+      ],
+      files,
+    })
+    return
+  }
+
+  if (cmd === 'status') {
     const { data, status } = await axios.get(
       `${baseUrl}/api/client/servers/${serverId}/resources`,
       httpOptions
-    );
+    )
 
-    if (data.attributes.current_state === 'offline' || data.attributes.current_state === 'stopping')
-      return msg.channel.send(
-        Embed.info('Server is **offline**', `Use \`${prefix}start\` to start the server.`)
-      );
-
-    if (data.attributes.current_state === 'starting')
-      return msg.channel.send(Embed.info('Server is currently **starting**'));
-
-    if (data.attributes.current_state === 'running') {
-      const { data } = await axios.get(process.env.PLAYER_LIST_ENDPOINT!);
-      return msg.channel.send(
-        Embed.success(
-          'Server is **online**',
-          data.players.length
-            ? `**Players (${data.players.length}):** ${data.players
-                .join(', ')
-                .replace(/\\/g, '\\\\')
-                .replace(/_/g, '\\_')}`
-            : 'No players connected'
-        )
-      );
+    if (
+      data.attributes.current_state === 'offline' ||
+      data.attributes.current_state === 'stopping'
+    ) {
+      interaction.editReply({
+        embeds: [Embed.info('Server is **offline**', `Use \`/start\` to start the server.`)],
+        components: [
+          new MessageActionRow({
+            components: [
+              new MessageButton({
+                customId: 'start-server',
+                label: 'Start server',
+                style: 'SUCCESS',
+              }),
+            ],
+          }),
+        ],
+        files,
+      })
+      return
     }
 
-    return msg.channel.send(
-      Embed.error(`Unhandled ${status}!`, '```' + JSON.stringify(data, null, 2) + '```')
-    );
-  } else if (cmd === 'help') {
-    return msg.channel.send(
-      new Embed({
-        title: 'Server manager',
-        fields: [
-          { name: `\`${prefix}start\``, value: 'Start the server if it is not already running.' },
-          { name: `\`${prefix}status\``, value: 'Show server status and connected players.' },
-          { name: `\`${prefix}help\``, value: 'Show this help message.' },
-        ],
-        footer: { text: 'Created by wiisportsresorts#3101' },
+    if (data.attributes.current_state === 'starting') {
+      interaction.editReply({
+        embeds: [Embed.info('Server is currently **starting**')],
+        files,
       })
-    );
-  }
-});
+      return
+    }
 
-client.login(process.env.DISCORD_TOKEN);
+    if (data.attributes.current_state === 'running') {
+      const { data } = await axios.get(process.env.PLAYER_LIST_ENDPOINT!)
+      interaction.editReply({
+        embeds: [
+          Embed.success(
+            'Server is **online**',
+            data.players.length
+              ? `**Players (${data.players.length}):** ${data.players
+                  .join(', ')
+                  .replace(/\\/g, '\\\\')
+                  .replace(/_/g, '\\_')}`
+              : 'No players connected'
+          ),
+        ],
+        files,
+      })
+      return
+    }
+
+    interaction.editReply({
+      embeds: [Embed.error(`Unhandled ${status}!`, '```' + JSON.stringify(data, null, 2) + '```')],
+      files,
+    })
+  }
+})
+
+client.login(process.env.DISCORD_TOKEN)

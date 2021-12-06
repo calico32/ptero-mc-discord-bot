@@ -1,15 +1,11 @@
-FROM node:14-buster
+FROM node:16-alpine
 
 ENV DOCKER=true
 
-# install yarn
-RUN curl -sL https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add -
-RUN echo "deb https://dl.yarnpkg.com/debian/ stable main" | tee /etc/apt/sources.list.d/yarn.list
-RUN apt update && apt -y install yarn
-
 WORKDIR /app
 
-COPY package.json yarn.lock ./
+COPY package.json yarn.lock .pnp.cjs .pnp.loader.mjs ./
+COPY .yarn .yarn
 
 RUN yarn
 

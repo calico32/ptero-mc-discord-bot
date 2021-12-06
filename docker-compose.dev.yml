@@ -1,0 +1,8 @@
+version: '3.9'
+
+services:
+  app:
+    command: yarn nodemon dist/index.js
+    network_mode: host
+    volumes:
+      - ./:/app
